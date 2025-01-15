@@ -1,12 +1,19 @@
-#ifndef DOSSIER_MOVE_BY_COPY_H
-#define DOSSIER_MOVE_BY_COPY_H
+/**
+ * @file src/move_by_copy.h
+ * @brief Declarations for the MoveByCopy utility class.
+ */
+#pragma once
 
 #include <utility>
-namespace move_by_copy_util {
-  /*
- * When a copy is made, it moves the object
- * This allows you to move an object when a move can't be done.
+
+/**
+ * @brief Contains utilities for moving objects by copying them.
  */
+namespace move_by_copy_util {
+  /**
+   * When a copy is made, it moves the object
+   * This allows you to move an object when a move can't be done.
+   */
   template <class T>
   class MoveByCopy {
   public:
@@ -53,4 +60,3 @@ namespace move_by_copy_util {
     return MoveByCopy<T>(std::move(const_cast<T &>(movable)));
   }
 }  // namespace move_by_copy_util
-#endif

@@ -1,11 +1,14 @@
-#ifndef SUNSHINE_PLATFORM_AV_AUDIO_H
-#define SUNSHINE_PLATFORM_AV_AUDIO_H
+/**
+ * @file src/platform/macos/av_audio.h
+ * @brief Declarations for audio capture on macOS.
+ */
+#pragma once
 
 #import <AVFoundation/AVFoundation.h>
 
 #include "third-party/TPCircularBuffer/TPCircularBuffer.h"
 
-#define kBufferLength 2048
+#define kBufferLength 4096
 
 @interface AVAudio: NSObject <AVCaptureAudioDataOutputSampleBufferDelegate> {
 @public
@@ -22,5 +25,3 @@
 - (int)setupMicrophone:(AVCaptureDevice *)device sampleRate:(UInt32)sampleRate frameSize:(UInt32)frameSize channels:(UInt8)channels;
 
 @end
-
-#endif  //SUNSHINE_PLATFORM_AV_AUDIO_H

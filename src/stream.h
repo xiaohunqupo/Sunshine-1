@@ -1,7 +1,9 @@
-// Created by loki on 6/5/19.
-
-#ifndef SUNSHINE_STREAM_H
-#define SUNSHINE_STREAM_H
+/**
+ * @file src/stream.h
+ * @brief Declarations for the streaming protocols.
+ */
+#pragma once
+#include <utility>
 
 #include <boost/asio.hpp>
 
@@ -21,24 +23,26 @@ namespace stream {
 
     int packetsize;
     int minRequiredFecPackets;
-    int featureFlags;
+    int mlFeatureFlags;
     int controlProtocolType;
     int audioQosType;
     int videoQosType;
+
+    uint32_t encryptionFlagsEnabled;
 
     std::optional<int> gcmap;
   };
 
   namespace session {
     enum class state_e : int {
-      STOPPED,
-      STOPPING,
-      STARTING,
-      RUNNING,
+      STOPPED,  ///< The session is stopped
+      STOPPING,  ///< The session is stopping
+      STARTING,  ///< The session is starting
+      RUNNING,  ///< The session is running
     };
 
     std::shared_ptr<session_t>
-    alloc(config_t &config, crypto::aes_t &gcm_key, crypto::aes_t &iv);
+    alloc(config_t &config, rtsp_stream::launch_session_t &launch_session);
     int
     start(session_t &session, const std::string &addr_string);
     void
@@ -49,5 +53,3 @@ namespace stream {
     state(session_t &session);
   }  // namespace session
 }  // namespace stream
-
-#endif  // SUNSHINE_STREAM_H

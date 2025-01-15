@@ -1,5 +1,11 @@
+/**
+ * @file src/platform/windows/display_ram.cpp
+ * @brief Definitions for handling ram.
+ */
 #include "display.h"
-#include "src/main.h"
+
+#include "misc.h"
+#include "src/logging.h"
 
 namespace platf {
   using namespace std::literals;
@@ -81,7 +87,7 @@ namespace platf::dxgi {
     auto colors_out = (std::uint8_t *) &cursor_pixel;
     auto colors_in = (std::uint8_t *) img_pixel_p;
 
-    //TODO: When use of IDXGIOutput5 is implemented, support different color formats
+    // TODO: When use of IDXGIOutput5 is implemented, support different color formats
     auto alpha = colors_out[3];
     if (alpha == 255) {
       *img_pixel_p = cursor_pixel;
@@ -95,7 +101,7 @@ namespace platf::dxgi {
 
   void
   apply_color_masked(int *img_pixel_p, int cursor_pixel) {
-    //TODO: When use of IDXGIOutput5 is implemented, support different color formats
+    // TODO: When use of IDXGIOutput5 is implemented, support different color formats
     auto alpha = ((std::uint8_t *) &cursor_pixel)[3];
     if (alpha == 0xFF) {
       *img_pixel_p ^= cursor_pixel;
@@ -171,11 +177,8 @@ namespace platf::dxgi {
   }
 
   capture_e
-  display_ram_t::snapshot(::platf::img_t *img_base, std::chrono::milliseconds timeout, bool cursor_visible) {
-    auto img = (img_t *) img_base;
-
+  display_ddup_ram_t::snapshot(const pull_free_image_cb_t &pull_free_image_cb, std::shared_ptr<platf::img_t> &img_out, std::chrono::milliseconds timeout, bool cursor_visible) {
     HRESULT status;
-
     DXGI_OUTDUPL_FRAME_INFO frame_info;
 
     resource_t::pointer res_p {};
@@ -192,6 +195,12 @@ namespace platf::dxgi {
 
     if (!update_flag) {
       return capture_e::timeout;
+    }
+
+    std::optional<std::chrono::steady_clock::time_point> frame_timestamp;
+    if (auto qpc_displayed = std::max(frame_info.LastPresentTime.QuadPart, frame_info.LastMouseUpdateTime.QuadPart)) {
+      // Translate QueryPerformanceCounter() value to steady_clock time point
+      frame_timestamp = std::chrono::steady_clock::now() - qpc_time_difference(qpc_counter(), qpc_displayed);
     }
 
     if (frame_info.PointerShapeBufferSize > 0) {
@@ -264,10 +273,15 @@ namespace platf::dxgi {
           return capture_e::reinit;
         }
 
-        //Copy from GPU to CPU
+        // Copy from GPU to CPU
         device_ctx->CopyResource(texture.get(), src.get());
       }
     }
+
+    if (!pull_free_image_cb(img_out)) {
+      return capture_e::interrupted;
+    }
+    auto img = (img_t *) img_out.get();
 
     // If we don't know the final capture format yet, encode a dummy image
     if (capture_format == DXGI_FORMAT_UNKNOWN) {
@@ -304,7 +318,16 @@ namespace platf::dxgi {
       blend_cursor(cursor, *img);
     }
 
+    if (img) {
+      img->frame_timestamp = frame_timestamp;
+    }
+
     return capture_e::ok;
+  }
+
+  capture_e
+  display_ddup_ram_t::release_snapshot() {
+    return dup.release_frame();
   }
 
   std::shared_ptr<platf::img_t>
@@ -347,6 +370,9 @@ namespace platf::dxgi {
     return 0;
   }
 
+  /**
+   * @memberof platf::dxgi::display_ram_t
+   */
   int
   display_ram_t::dummy_img(platf::img_t *img) {
     if (complete_img(img, true)) {
@@ -358,22 +384,22 @@ namespace platf::dxgi {
   }
 
   std::vector<DXGI_FORMAT>
-  display_ram_t::get_supported_sdr_capture_formats() {
-    return { DXGI_FORMAT_B8G8R8A8_UNORM };
-  }
-
-  std::vector<DXGI_FORMAT>
-  display_ram_t::get_supported_hdr_capture_formats() {
-    // HDR is unsupported
-    return {};
+  display_ram_t::get_supported_capture_formats() {
+    return { DXGI_FORMAT_B8G8R8A8_UNORM, DXGI_FORMAT_B8G8R8X8_UNORM };
   }
 
   int
-  display_ram_t::init(const ::video::config_t &config, const std::string &display_name) {
-    if (display_base_t::init(config, display_name)) {
+  display_ddup_ram_t::init(const ::video::config_t &config, const std::string &display_name) {
+    if (display_base_t::init(config, display_name) || dup.init(this, config)) {
       return -1;
     }
 
     return 0;
   }
+
+  std::unique_ptr<avcodec_encode_device_t>
+  display_ram_t::make_avcodec_encode_device(pix_fmt_e pix_fmt) {
+    return std::make_unique<avcodec_encode_device_t>();
+  }
+
 }  // namespace platf::dxgi

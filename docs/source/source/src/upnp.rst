@@ -1,4 +1,0 @@
-upnp
-====
-
-.. doxygenfile:: upnp.h

@@ -1,8 +1,10 @@
-// Created by loki on 6/10/19.
+/**
+ * @file src/thread_safe.h
+ * @brief Declarations for thread-safe data structures.
+ */
+#pragma once
 
-#ifndef SUNSHINE_THREAD_SAFE_H
-#define SUNSHINE_THREAD_SAFE_H
-
+#include <array>
 #include <atomic>
 #include <condition_variable>
 #include <functional>
@@ -36,7 +38,7 @@ namespace safe {
       _cv.notify_all();
     }
 
-    // pop and view shoud not be used interchangeably
+    // pop and view should not be used interchangeably
     status_t
     pop() {
       std::unique_lock ul { _lock };
@@ -58,7 +60,7 @@ namespace safe {
       return val;
     }
 
-    // pop and view shoud not be used interchangeably
+    // pop and view should not be used interchangeably
     template <class Rep, class Period>
     status_t
     pop(std::chrono::duration<Rep, Period> delay) {
@@ -79,8 +81,8 @@ namespace safe {
       return val;
     }
 
-    // pop and view shoud not be used interchangeably
-    const status_t &
+    // pop and view should not be used interchangeably
+    status_t
     view() {
       std::unique_lock ul { _lock };
 
@@ -92,6 +94,25 @@ namespace safe {
         _cv.wait(ul);
 
         if (!_continue) {
+          return util::false_v<status_t>;
+        }
+      }
+
+      return _status;
+    }
+
+    // pop and view should not be used interchangeably
+    template <class Rep, class Period>
+    status_t
+    view(std::chrono::duration<Rep, Period> delay) {
+      std::unique_lock ul { _lock };
+
+      if (!_continue) {
+        return util::false_v<status_t>;
+      }
+
+      while (!_status) {
+        if (!_continue || _cv.wait_for(ul, delay) == std::cv_status::timeout) {
           return util::false_v<status_t>;
         }
       }
@@ -140,14 +161,12 @@ namespace safe {
   public:
     using status_t = util::optional_t<T>;
 
-    alarm_raw_t():
-        _status { util::false_v<status_t> } {}
-
     void
     ring(const status_t &status) {
       std::lock_guard lg(_lock);
 
       _status = status;
+      _rang = true;
       _cv.notify_one();
     }
 
@@ -156,6 +175,7 @@ namespace safe {
       std::lock_guard lg(_lock);
 
       _status = std::move(status);
+      _rang = true;
       _cv.notify_one();
     }
 
@@ -164,7 +184,7 @@ namespace safe {
     wait_for(const std::chrono::duration<Rep, Period> &rel_time) {
       std::unique_lock ul(_lock);
 
-      return _cv.wait_for(ul, rel_time, [this]() { return (bool) status(); });
+      return _cv.wait_for(ul, rel_time, [this]() { return _rang; });
     }
 
     template <class Rep, class Period, class Pred>
@@ -172,7 +192,7 @@ namespace safe {
     wait_for(const std::chrono::duration<Rep, Period> &rel_time, Pred &&pred) {
       std::unique_lock ul(_lock);
 
-      return _cv.wait_for(ul, rel_time, [this, &pred]() { return (bool) status() || pred(); });
+      return _cv.wait_for(ul, rel_time, [this, &pred]() { return _rang || pred(); });
     }
 
     template <class Rep, class Period>
@@ -180,7 +200,7 @@ namespace safe {
     wait_until(const std::chrono::duration<Rep, Period> &rel_time) {
       std::unique_lock ul(_lock);
 
-      return _cv.wait_until(ul, rel_time, [this]() { return (bool) status(); });
+      return _cv.wait_until(ul, rel_time, [this]() { return _rang; });
     }
 
     template <class Rep, class Period, class Pred>
@@ -188,20 +208,20 @@ namespace safe {
     wait_until(const std::chrono::duration<Rep, Period> &rel_time, Pred &&pred) {
       std::unique_lock ul(_lock);
 
-      return _cv.wait_until(ul, rel_time, [this, &pred]() { return (bool) status() || pred(); });
+      return _cv.wait_until(ul, rel_time, [this, &pred]() { return _rang || pred(); });
     }
 
     auto
     wait() {
       std::unique_lock ul(_lock);
-      _cv.wait(ul, [this]() { return (bool) status(); });
+      _cv.wait(ul, [this]() { return _rang; });
     }
 
     template <class Pred>
     auto
     wait(Pred &&pred) {
       std::unique_lock ul(_lock);
-      _cv.wait(ul, [this, &pred]() { return (bool) status() || pred(); });
+      _cv.wait(ul, [this, &pred]() { return _rang || pred(); });
     }
 
     const status_t &
@@ -217,13 +237,15 @@ namespace safe {
     void
     reset() {
       _status = status_t {};
+      _rang = false;
     }
 
   private:
     std::mutex _lock;
     std::condition_variable _cv;
 
-    status_t _status;
+    status_t _status { util::false_v<status_t> };
+    bool _rang { false };
   };
 
   template <class T>
@@ -553,5 +575,3 @@ namespace safe {
     mail->cleanup();
   }
 }  // namespace safe
-
-#endif  // SUNSHINE_THREAD_SAFE_H

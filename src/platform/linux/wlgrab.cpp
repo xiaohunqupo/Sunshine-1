@@ -1,7 +1,15 @@
+/**
+ * @file src/platform/linux/wlgrab.cpp
+ * @brief Definitions for wlgrab capture.
+ */
+#include <thread>
+
 #include "src/platform/common.h"
 
-#include "src/main.h"
+#include "src/logging.h"
 #include "src/video.h"
+
+#include "cuda.h"
 #include "vaapi.h"
 #include "wayland.h"
 
@@ -80,14 +88,14 @@ namespace wl {
     }
 
     inline platf::capture_e
-    snapshot(platf::img_t *img_out_base, std::chrono::milliseconds timeout, bool cursor) {
+    snapshot(const pull_free_image_cb_t &pull_free_image_cb, std::shared_ptr<platf::img_t> &img_out, std::chrono::milliseconds timeout, bool cursor) {
       auto to = std::chrono::steady_clock::now() + timeout;
 
+      // Dispatch events until we get a new frame or the timeout expires
       dmabuf.listen(interface.dmabuf_manager, output, cursor);
       do {
-        display.roundtrip();
-
-        if (to < std::chrono::steady_clock::now()) {
+        auto remaining_time_ms = std::chrono::duration_cast<std::chrono::milliseconds>(to - std::chrono::steady_clock::now());
+        if (remaining_time_ms.count() < 0 || !display.dispatch(remaining_time_ms)) {
           return platf::capture_e::timeout;
         }
       } while (dmabuf.status == dmabuf_t::WAITING);
@@ -118,30 +126,41 @@ namespace wl {
   class wlr_ram_t: public wlr_t {
   public:
     platf::capture_e
-    capture(snapshot_cb_t &&snapshot_cb, std::shared_ptr<platf::img_t> img, bool *cursor) override {
+    capture(const push_captured_image_cb_t &push_captured_image_cb, const pull_free_image_cb_t &pull_free_image_cb, bool *cursor) override {
       auto next_frame = std::chrono::steady_clock::now();
 
-      while (img) {
+      sleep_overshoot_logger.reset();
+
+      while (true) {
         auto now = std::chrono::steady_clock::now();
 
         if (next_frame > now) {
-          std::this_thread::sleep_for((next_frame - now) / 3 * 2);
+          std::this_thread::sleep_for(next_frame - now);
+          sleep_overshoot_logger.first_point(next_frame);
+          sleep_overshoot_logger.second_point_now_and_log();
         }
-        while (next_frame > now) {
-          now = std::chrono::steady_clock::now();
-        }
-        next_frame = now + delay;
 
-        auto status = snapshot(img.get(), 1000ms, *cursor);
+        next_frame += delay;
+        if (next_frame < now) {  // some major slowdown happened; we couldn't keep up
+          next_frame = now + delay;
+        }
+
+        std::shared_ptr<platf::img_t> img_out;
+        auto status = snapshot(pull_free_image_cb, img_out, 1000ms, *cursor);
         switch (status) {
           case platf::capture_e::reinit:
           case platf::capture_e::error:
+          case platf::capture_e::interrupted:
             return status;
           case platf::capture_e::timeout:
-            img = snapshot_cb(img, false);
+            if (!push_captured_image_cb(std::move(img_out), false)) {
+              return platf::capture_e::ok;
+            }
             break;
           case platf::capture_e::ok:
-            img = snapshot_cb(img, true);
+            if (!push_captured_image_cb(std::move(img_out), true)) {
+              return platf::capture_e::ok;
+            }
             break;
           default:
             BOOST_LOG(error) << "Unrecognized capture status ["sv << (int) status << ']';
@@ -153,8 +172,8 @@ namespace wl {
     }
 
     platf::capture_e
-    snapshot(platf::img_t *img_out_base, std::chrono::milliseconds timeout, bool cursor) {
-      auto status = wlr_t::snapshot(img_out_base, timeout, cursor);
+    snapshot(const pull_free_image_cb_t &pull_free_image_cb, std::shared_ptr<platf::img_t> &img_out, std::chrono::milliseconds timeout, bool cursor) {
+      auto status = wlr_t::snapshot(pull_free_image_cb, img_out, timeout, cursor);
       if (status != platf::capture_e::ok) {
         return status;
       }
@@ -167,14 +186,19 @@ namespace wl {
         return platf::capture_e::reinit;
       }
 
+      if (!pull_free_image_cb(img_out)) {
+        return platf::capture_e::interrupted;
+      }
+
       gl::ctx.BindTexture(GL_TEXTURE_2D, (*rgb_opt)->tex[0]);
 
+      // Don't remove these lines, see https://github.com/LizardByte/Sunshine/issues/453
       int w, h;
       gl::ctx.GetTexLevelParameteriv(GL_TEXTURE_2D, 0, GL_TEXTURE_WIDTH, &w);
       gl::ctx.GetTexLevelParameteriv(GL_TEXTURE_2D, 0, GL_TEXTURE_HEIGHT, &h);
       BOOST_LOG(debug) << "width and height: w "sv << w << " h "sv << h;
 
-      gl::ctx.GetTextureSubImage((*rgb_opt)->tex[0], 0, 0, 0, 0, width, height, 1, GL_BGRA, GL_UNSIGNED_BYTE, img_out_base->height * img_out_base->row_pitch, img_out_base->data);
+      gl::ctx.GetTextureSubImage((*rgb_opt)->tex[0], 0, 0, 0, 0, width, height, 1, GL_BGRA, GL_UNSIGNED_BYTE, img_out->height * img_out->row_pitch, img_out->data);
       gl::ctx.BindTexture(GL_TEXTURE_2D, 0);
 
       return platf::capture_e::ok;
@@ -201,13 +225,21 @@ namespace wl {
       return 0;
     }
 
-    std::shared_ptr<platf::hwdevice_t>
-    make_hwdevice(platf::pix_fmt_e pix_fmt) override {
+    std::unique_ptr<platf::avcodec_encode_device_t>
+    make_avcodec_encode_device(platf::pix_fmt_e pix_fmt) override {
+#ifdef SUNSHINE_BUILD_VAAPI
       if (mem_type == platf::mem_type_e::vaapi) {
-        return va::make_hwdevice(width, height, false);
+        return va::make_avcodec_encode_device(width, height, false);
       }
+#endif
 
-      return std::make_shared<platf::hwdevice_t>();
+#ifdef SUNSHINE_BUILD_CUDA
+      if (mem_type == platf::mem_type_e::cuda) {
+        return cuda::make_avcodec_encode_device(width, height, false);
+      }
+#endif
+
+      return std::make_unique<platf::avcodec_encode_device_t>();
     }
 
     std::shared_ptr<platf::img_t>
@@ -229,30 +261,41 @@ namespace wl {
   class wlr_vram_t: public wlr_t {
   public:
     platf::capture_e
-    capture(snapshot_cb_t &&snapshot_cb, std::shared_ptr<platf::img_t> img, bool *cursor) override {
+    capture(const push_captured_image_cb_t &push_captured_image_cb, const pull_free_image_cb_t &pull_free_image_cb, bool *cursor) override {
       auto next_frame = std::chrono::steady_clock::now();
 
-      while (img) {
+      sleep_overshoot_logger.reset();
+
+      while (true) {
         auto now = std::chrono::steady_clock::now();
 
         if (next_frame > now) {
-          std::this_thread::sleep_for((next_frame - now) / 3 * 2);
+          std::this_thread::sleep_for(next_frame - now);
+          sleep_overshoot_logger.first_point(next_frame);
+          sleep_overshoot_logger.second_point_now_and_log();
         }
-        while (next_frame > now) {
-          now = std::chrono::steady_clock::now();
-        }
-        next_frame = now + delay;
 
-        auto status = snapshot(img.get(), 1000ms, *cursor);
+        next_frame += delay;
+        if (next_frame < now) {  // some major slowdown happened; we couldn't keep up
+          next_frame = now + delay;
+        }
+
+        std::shared_ptr<platf::img_t> img_out;
+        auto status = snapshot(pull_free_image_cb, img_out, 1000ms, *cursor);
         switch (status) {
           case platf::capture_e::reinit:
           case platf::capture_e::error:
+          case platf::capture_e::interrupted:
             return status;
           case platf::capture_e::timeout:
-            img = snapshot_cb(img, false);
+            if (!push_captured_image_cb(std::move(img_out), false)) {
+              return platf::capture_e::ok;
+            }
             break;
           case platf::capture_e::ok:
-            img = snapshot_cb(img, true);
+            if (!push_captured_image_cb(std::move(img_out), true)) {
+              return platf::capture_e::ok;
+            }
             break;
           default:
             BOOST_LOG(error) << "Unrecognized capture status ["sv << (int) status << ']';
@@ -264,13 +307,16 @@ namespace wl {
     }
 
     platf::capture_e
-    snapshot(platf::img_t *img_out_base, std::chrono::milliseconds timeout, bool cursor) {
-      auto status = wlr_t::snapshot(img_out_base, timeout, cursor);
+    snapshot(const pull_free_image_cb_t &pull_free_image_cb, std::shared_ptr<platf::img_t> &img_out, std::chrono::milliseconds timeout, bool cursor) {
+      auto status = wlr_t::snapshot(pull_free_image_cb, img_out, timeout, cursor);
       if (status != platf::capture_e::ok) {
         return status;
       }
 
-      auto img = (egl::img_descriptor_t *) img_out_base;
+      if (!pull_free_image_cb(img_out)) {
+        return platf::capture_e::interrupted;
+      }
+      auto img = (egl::img_descriptor_t *) img_out.get();
       img->reset();
 
       auto current_frame = dmabuf.current_frame;
@@ -290,6 +336,8 @@ namespace wl {
     alloc_img() override {
       auto img = std::make_shared<egl::img_descriptor_t>();
 
+      img->width = width;
+      img->height = height;
       img->sequence = 0;
       img->serial = std::numeric_limits<decltype(img->serial)>::max();
       img->data = nullptr;
@@ -300,18 +348,27 @@ namespace wl {
       return img;
     }
 
-    std::shared_ptr<platf::hwdevice_t>
-    make_hwdevice(platf::pix_fmt_e pix_fmt) override {
+    std::unique_ptr<platf::avcodec_encode_device_t>
+    make_avcodec_encode_device(platf::pix_fmt_e pix_fmt) override {
+#ifdef SUNSHINE_BUILD_VAAPI
       if (mem_type == platf::mem_type_e::vaapi) {
-        return va::make_hwdevice(width, height, 0, 0, true);
+        return va::make_avcodec_encode_device(width, height, 0, 0, true);
       }
+#endif
 
-      return std::make_shared<platf::hwdevice_t>();
+#ifdef SUNSHINE_BUILD_CUDA
+      if (mem_type == platf::mem_type_e::cuda) {
+        return cuda::make_avcodec_gl_encode_device(width, height, 0, 0);
+      }
+#endif
+
+      return std::make_unique<platf::avcodec_encode_device_t>();
     }
 
     int
     dummy_img(platf::img_t *img) override {
-      return snapshot(img, 1000ms, false) != platf::capture_e::ok;
+      // Empty images are recognized as dummies by the zero sequence number
+      return 0;
     }
 
     std::uint64_t sequence {};
@@ -327,7 +384,7 @@ namespace platf {
       return nullptr;
     }
 
-    if (hwdevice_type == platf::mem_type_e::vaapi) {
+    if (hwdevice_type == platf::mem_type_e::vaapi || hwdevice_type == platf::mem_type_e::cuda) {
       auto wlr = std::make_shared<wl::wlr_vram_t>();
       if (wlr->init(hwdevice_type, display_name, config)) {
         return nullptr;
@@ -377,14 +434,20 @@ namespace platf {
 
     display.roundtrip();
 
+    BOOST_LOG(info) << "-------- Start of Wayland monitor list --------"sv;
+
     for (int x = 0; x < interface.monitors.size(); ++x) {
       auto monitor = interface.monitors[x].get();
 
       wl::env_width = std::max(wl::env_width, (int) (monitor->viewport.offset_x + monitor->viewport.width));
       wl::env_height = std::max(wl::env_height, (int) (monitor->viewport.offset_y + monitor->viewport.height));
 
+      BOOST_LOG(info) << "Monitor " << x << " is "sv << monitor->name << ": "sv << monitor->description;
+
       display_names.emplace_back(std::to_string(x));
     }
+
+    BOOST_LOG(info) << "--------- End of Wayland monitor list ---------"sv;
 
     return display_names;
   }

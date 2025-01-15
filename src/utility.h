@@ -1,11 +1,15 @@
-#ifndef UTILITY_H
-#define UTILITY_H
+/**
+ * @file src/utility.h
+ * @brief Declarations for utility functions.
+ */
+#pragma once
 
 #include <algorithm>
 #include <condition_variable>
 #include <memory>
 #include <mutex>
 #include <optional>
+#include <ostream>
 #include <string>
 #include <string_view>
 #include <type_traits>
@@ -263,6 +267,12 @@ namespace util {
     return Hex<T>(elem, rev);
   }
 
+  template <typename T>
+  std::string
+  log_hex(const T &value) {
+    return "0x" + Hex<T>(value, false).to_string();
+  }
+
   template <class It>
   std::string
   hex_vec(It begin, It end, bool rev = false) {
@@ -487,6 +497,7 @@ namespace util {
   public:
     using element_type = T;
     using pointer = element_type *;
+    using const_pointer = element_type const *;
     using deleter_type = D;
 
     constexpr uniq_ptr() noexcept:
@@ -560,12 +571,12 @@ namespace util {
       return _p;
     }
 
-    const pointer
+    const_pointer
     get() const {
       return _p;
     }
 
-    const std::add_lvalue_reference_t<element_type>
+    std::add_lvalue_reference_t<element_type const>
     operator*() const {
       return *_p;
     }
@@ -573,7 +584,7 @@ namespace util {
     operator*() {
       return *_p;
     }
-    const pointer
+    const_pointer
     operator->() const {
       return _p;
     }
@@ -601,7 +612,8 @@ namespace util {
       return _deleter;
     }
 
-    explicit operator bool() const {
+    explicit
+    operator bool() const {
       return _p != nullptr;
     }
 
@@ -684,7 +696,9 @@ namespace util {
   public:
     using element_type = T;
     using pointer = element_type *;
+    using const_pointer = element_type const *;
     using reference = element_type &;
+    using const_reference = element_type const &;
 
     wrap_ptr():
         _own_ptr { false }, _p { nullptr } {}
@@ -741,7 +755,7 @@ namespace util {
       _own_ptr = false;
     }
 
-    const reference
+    const_reference
     operator*() const {
       return *_p;
     }
@@ -749,7 +763,7 @@ namespace util {
     operator*() {
       return *_p;
     }
-    const pointer
+    const_pointer
     operator->() const {
       return _p;
     }
@@ -934,6 +948,16 @@ namespace util {
     return std::string_view((const char *) &data, sizeof(T));
   }
 
+  struct point_t {
+    double x;
+    double y;
+
+    friend std::ostream &
+    operator<<(std::ostream &os, const point_t &p) {
+      return (os << "Point(x: " << p.x << ", y: " << p.y << ")");
+    }
+  };
+
   namespace endian {
     template <class T = void>
     struct endianness {
@@ -953,12 +977,11 @@ namespace util {
   defined(__AARCH64EL__) ||                                       \
   defined(_MIPSEL) || defined(__MIPSEL) || defined(__MIPSEL__) || \
   defined(_WIN32)
-        // It's a little-endian target architecture
-        little = true,
+        little = true,  ///< little-endian target architecture
 #else
   #error "Unknown Endianness"
 #endif
-        big = !little
+        big = !little  ///< big-endian target architecture
       };
     };
 
@@ -1030,4 +1053,3 @@ namespace util {
     big(T x) { return endian_helper<T>::big(x); }
   }  // namespace endian
 }  // namespace util
-#endif

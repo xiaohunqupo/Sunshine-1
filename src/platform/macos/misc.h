@@ -1,12 +1,20 @@
-#ifndef SUNSHINE_PLATFORM_MISC_H
-#define SUNSHINE_PLATFORM_MISC_H
+/**
+ * @file src/platform/macos/misc.h
+ * @brief Miscellaneous declarations for macOS platform.
+ */
+#pragma once
 
 #include <vector>
 
 #include <CoreGraphics/CoreGraphics.h>
 
+namespace platf {
+  bool
+  is_screen_capture_allowed();
+}
+
 namespace dyn {
-  typedef void (*apiproc)(void);
+  typedef void (*apiproc)();
 
   int
   load(void *handle, const std::vector<std::tuple<apiproc *, const char *>> &funcs, bool strict = true);
@@ -14,5 +22,3 @@ namespace dyn {
   handle(const std::vector<const char *> &libs);
 
 }  // namespace dyn
-
-#endif

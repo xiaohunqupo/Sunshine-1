@@ -1,10 +1,14 @@
-// Created by loki on 8-2-19.
-
-#ifndef T_MAN_UUID_H
-#define T_MAN_UUID_H
+/**
+ * @file src/uuid.h
+ * @brief Declarations for UUID generation.
+ */
+#pragma once
 
 #include <random>
 
+/**
+ * @brief UUID utilities.
+ */
 namespace uuid_util {
   union uuid_t {
     std::uint8_t b8[16];
@@ -80,4 +84,3 @@ namespace uuid_util {
     }
   };
 }  // namespace uuid_util
-#endif  // T_MAN_UUID_H

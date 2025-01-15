@@ -1,5 +1,8 @@
-#ifndef SUNSHINE_CBS_H
-#define SUNSHINE_CBS_H
+/**
+ * @file src/cbs.h
+ * @brief Declarations for FFmpeg Coded Bitstream API.
+ */
+#pragma once
 
 #include "utility.h"
 
@@ -28,10 +31,11 @@ namespace cbs {
   make_sps_h264(const AVCodecContext *ctx, const AVPacket *packet);
 
   /**
- * Check if SPS->VUI is present
- */
+   * @brief Validates the Sequence Parameter Set (SPS) of a given packet.
+   * @param packet The packet to validate.
+   * @param codec_id The ID of the codec used (either AV_CODEC_ID_H264 or AV_CODEC_ID_H265).
+   * @return True if the SPS->VUI is present in the active SPS of the packet, false otherwise.
+   */
   bool
   validate_sps(const AVPacket *packet, int codec_id);
 }  // namespace cbs
-
-#endif

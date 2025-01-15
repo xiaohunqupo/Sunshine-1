@@ -1,4 +1,0 @@
-confighttp
-==========
-
-.. doxygenfile:: confighttp.h

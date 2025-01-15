@@ -1,4 +1,0 @@
-input
-=====
-
-.. doxygenfile:: input.h

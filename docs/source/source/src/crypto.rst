@@ -1,4 +1,0 @@
-crypto
-======
-
-.. doxygenfile:: crypto.h

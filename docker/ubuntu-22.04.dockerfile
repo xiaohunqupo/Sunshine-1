@@ -1,4 +1,4 @@
-# syntax=docker/dockerfile:1.4
+# syntax=docker/dockerfile:1
 # artifacts: true
 # platforms: linux/amd64,linux/arm64/v8
 # platforms_pr: linux/amd64
@@ -9,10 +9,7 @@ FROM ${BASE}:${TAG} AS sunshine-base
 
 ENV DEBIAN_FRONTEND=noninteractive
 
-FROM sunshine-base as sunshine-build
-
-ARG TARGETPLATFORM
-RUN echo "target_platform: ${TARGETPLATFORM}"
+FROM sunshine-base AS sunshine-build
 
 ARG BRANCH
 ARG BUILD_VERSION
@@ -24,101 +21,35 @@ ENV BUILD_VERSION=${BUILD_VERSION}
 ENV COMMIT=${COMMIT}
 
 SHELL ["/bin/bash", "-o", "pipefail", "-c"]
-# install dependencies
-RUN <<_DEPS
-#!/bin/bash
-set -e
-apt-get update -y
-apt-get install -y --no-install-recommends \
-  build-essential=12.9* \
-  cmake=3.22.1* \
-  git=1:2.34.1* \
-  libappindicator3-dev=12.10.1* \
-  libavdevice-dev=7:4.4.* \
-  libboost-filesystem-dev=1.74.0* \
-  libboost-locale-dev=1.74.0* \
-  libboost-log-dev=1.74.0* \
-  libboost-program-options-dev=1.74.0* \
-  libboost-thread-dev=1.74.0* \
-  libcap-dev=1:2.44* \
-  libcurl4-openssl-dev=7.81.0* \
-  libdrm-dev=2.4.113* \
-  libevdev-dev=1.12.1* \
-  libnuma-dev=2.0.14* \
-  libopus-dev=1.3.1* \
-  libpulse-dev=1:15.99.1* \
-  libssl-dev=3.0.2* \
-  libva-dev=2.14.0* \
-  libvdpau-dev=1.4* \
-  libwayland-dev=1.20.0* \
-  libx11-dev=2:1.7.5* \
-  libxcb-shm0-dev=1.14* \
-  libxcb-xfixes0-dev=1.14* \
-  libxcb1-dev=1.14* \
-  libxfixes-dev=1:6.0.0* \
-  libxrandr-dev=2:1.5.2* \
-  libxtst-dev=2:1.2.3* \
-  nodejs=12.22.9* \
-  npm=8.5.1* \
-  wget=1.21.2*
-if [[ "${TARGETPLATFORM}" == 'linux/amd64' ]]; then
-  apt-get install -y --no-install-recommends \
-    libmfx-dev=22.3.0*
-fi
-apt-get clean
-rm -rf /var/lib/apt/lists/*
-_DEPS
-
-# install cuda
-WORKDIR /build/cuda
-# versions: https://developer.nvidia.com/cuda-toolkit-archive
-ENV CUDA_VERSION="11.8.0"
-ENV CUDA_BUILD="520.61.05"
-# hadolint ignore=SC3010
-RUN <<_INSTALL_CUDA
-#!/bin/bash
-set -e
-cuda_prefix="https://developer.download.nvidia.com/compute/cuda/"
-cuda_suffix=""
-if [[ "${TARGETPLATFORM}" == 'linux/arm64' ]]; then
-  cuda_suffix="_sbsa"
-fi
-url="${cuda_prefix}${CUDA_VERSION}/local_installers/cuda_${CUDA_VERSION}_${CUDA_BUILD}_linux${cuda_suffix}.run"
-echo "cuda url: ${url}"
-wget "$url" --progress=bar:force:noscroll -q --show-progress -O ./cuda.run
-chmod a+x ./cuda.run
-./cuda.run --silent --toolkit --toolkitpath=/build/cuda --no-opengl-libs --no-man-page --no-drm
-rm ./cuda.run
-_INSTALL_CUDA
 
 # copy repository
 WORKDIR /build/sunshine/
 COPY --link .. .
 
-# setup npm dependencies
-RUN npm install
-
-# setup build directory
-WORKDIR /build/sunshine/build
-
 # cmake and cpack
-RUN <<_MAKE
+RUN <<_BUILD
 #!/bin/bash
 set -e
-cmake \
-  -DCMAKE_CUDA_COMPILER:PATH=/build/cuda/bin/nvcc \
-  -DCMAKE_BUILD_TYPE=Release \
-  -DCMAKE_INSTALL_PREFIX=/usr \
-  -DSUNSHINE_ASSETS_DIR=share/sunshine \
-  -DSUNSHINE_EXECUTABLE_PATH=/usr/bin/sunshine \
-  -DSUNSHINE_ENABLE_WAYLAND=ON \
-  -DSUNSHINE_ENABLE_X11=ON \
-  -DSUNSHINE_ENABLE_DRM=ON \
-  -DSUNSHINE_ENABLE_CUDA=ON \
-  /build/sunshine
-make -j "$(nproc)"
-cpack -G DEB
-_MAKE
+chmod +x ./scripts/linux_build.sh
+./scripts/linux_build.sh \
+  --publisher-name='LizardByte' \
+  --publisher-website='https://app.lizardbyte.dev' \
+  --publisher-issue-url='https://app.lizardbyte.dev/support' \
+  --sudo-off
+apt-get clean
+rm -rf /var/lib/apt/lists/*
+_BUILD
+
+# run tests
+WORKDIR /build/sunshine/build/tests
+# hadolint ignore=SC1091
+RUN <<_TEST
+#!/bin/bash
+set -e
+export DISPLAY=:1
+Xvfb ${DISPLAY} -screen 0 1024x768x24 &
+./test_sunshine --gtest_color=yes
+_TEST
 
 FROM scratch AS artifacts
 ARG BASE
@@ -126,7 +57,7 @@ ARG TAG
 ARG TARGETARCH
 COPY --link --from=sunshine-build /build/sunshine/build/cpack_artifacts/Sunshine.deb /sunshine-${BASE}-${TAG}-${TARGETARCH}.deb
 
-FROM sunshine-base as sunshine
+FROM sunshine-base AS sunshine
 
 # copy deb from builder
 COPY --link --from=artifacts /sunshine*.deb /sunshine.deb
@@ -162,7 +93,7 @@ RUN <<_SETUP_USER
 #!/bin/bash
 set -e
 groupadd -f -g "${PGID}" "${UNAME}"
-useradd -lm -d ${HOME} -s /bin/bash -g "${PGID}" -G input -u "${PUID}" "${UNAME}"
+useradd -lm -d ${HOME} -s /bin/bash -g "${PGID}" -u "${PUID}" "${UNAME}"
 mkdir -p ${HOME}/.config/sunshine
 ln -s ${HOME}/.config/sunshine /config
 chown -R ${UNAME} ${HOME}
