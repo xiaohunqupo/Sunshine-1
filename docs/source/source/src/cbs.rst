@@ -1,4 +1,0 @@
-cbs
-===
-
-.. doxygenfile:: cbs.h

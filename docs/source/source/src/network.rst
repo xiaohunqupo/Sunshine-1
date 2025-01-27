@@ -1,4 +1,0 @@
-network
-=======
-
-.. doxygenfile:: network.h

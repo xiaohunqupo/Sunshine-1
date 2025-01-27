@@ -1,4 +1,0 @@
-video
-=====
-
-.. doxygenfile:: video.h

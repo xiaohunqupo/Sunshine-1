@@ -1,4 +1,0 @@
-rtsp
-====
-
-.. doxygenfile:: rtsp.h
