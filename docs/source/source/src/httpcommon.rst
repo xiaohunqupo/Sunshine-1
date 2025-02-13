@@ -1,4 +1,0 @@
-httpcommon
-==========
-
-.. doxygenfile:: httpcommon.h

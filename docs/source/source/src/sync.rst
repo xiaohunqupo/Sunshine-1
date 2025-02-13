@@ -1,4 +1,0 @@
-sync
-====
-
-.. doxygenfile:: sync.h

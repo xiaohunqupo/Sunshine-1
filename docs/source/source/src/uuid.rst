@@ -1,4 +1,0 @@
-uuid
-====
-
-.. doxygenfile:: uuid.h
